@@ -6,13 +6,29 @@ namespace sakura {
 
 enum class MinecraftVersion {
     Auto,
+    V1_8_0,
+    V1_8_8,
     V1_8_9,
+    V1_9_4,
+    V1_10_2,
+    V1_11_2,
     V1_12_2,
+    V1_13_2,
+    V1_14_4,
+    V1_15_2,
     V1_16_5,
+    V1_17_1,
     V1_18_2,
+    V1_18_3,
+    V1_19_2,
+    V1_19_4,
     V1_20_1,
+    V1_20_2,
     V1_20_4,
+    V1_20_6,
     V1_21_0,
+    V1_21_1,
+    V1_21_3,
 };
 
 enum class ModLoader {

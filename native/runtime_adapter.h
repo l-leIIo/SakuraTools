@@ -1,20 +1,24 @@
 #pragma once
 
+#include "proxy.h"
 #include "runtime_profile.h"
+
 #include <cstddef>
 
 namespace sakura {
 
 struct MethodCandidate {
-    const char* named;
-    const char* mapped;
+    const char* officialName;
+    const char* srgName;
+    const char* yarnName;
     const char* descriptor;
     bool isStatic;
 };
 
 struct ClassCandidate {
     const char* officialName;
-    const char* legacyName;
+    const char* srgName;
+    const char* yarnName;
     const char* descriptor;
 };
 
@@ -27,9 +31,13 @@ struct RuntimeAdapter {
     const ClassCandidate* listenerClasses;
     size_t listenerClassCount;
     const MethodCandidate* minecraftInstance;
+    size_t minecraftInstanceCount;
     const MethodCandidate* minecraftConnection;
+    size_t minecraftConnectionCount;
     const MethodCandidate* listenerConnection;
-    const MethodCandidate* serverboundHelloName;
+    size_t listenerConnectionCount;
+    const MethodCandidate* helloName;
+    size_t helloNameCount;
 };
 
 const RuntimeAdapter* FindRuntimeAdapter(MinecraftVersion version, ModLoader loader);

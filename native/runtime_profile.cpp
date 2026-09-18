@@ -41,33 +41,77 @@ std::string JoinPath(const std::string& a, const std::string& b) {
 
 int VersionRank(sakura::MinecraftVersion version) {
     switch (version) {
+    case sakura::MinecraftVersion::V1_8_0: return 8;
+    case sakura::MinecraftVersion::V1_8_8: return 8;
     case sakura::MinecraftVersion::V1_8_9: return 8;
+    case sakura::MinecraftVersion::V1_9_4: return 9;
+    case sakura::MinecraftVersion::V1_10_2: return 10;
+    case sakura::MinecraftVersion::V1_11_2: return 11;
     case sakura::MinecraftVersion::V1_12_2: return 12;
+    case sakura::MinecraftVersion::V1_13_2: return 13;
+    case sakura::MinecraftVersion::V1_14_4: return 14;
+    case sakura::MinecraftVersion::V1_15_2: return 15;
     case sakura::MinecraftVersion::V1_16_5: return 16;
+    case sakura::MinecraftVersion::V1_17_1: return 17;
     case sakura::MinecraftVersion::V1_18_2: return 18;
+    case sakura::MinecraftVersion::V1_18_3: return 18;
+    case sakura::MinecraftVersion::V1_19_2: return 19;
+    case sakura::MinecraftVersion::V1_19_4: return 19;
     case sakura::MinecraftVersion::V1_20_1: return 20;
+    case sakura::MinecraftVersion::V1_20_2: return 20;
     case sakura::MinecraftVersion::V1_20_4: return 20;
+    case sakura::MinecraftVersion::V1_20_6: return 20;
     case sakura::MinecraftVersion::V1_21_0: return 21;
+    case sakura::MinecraftVersion::V1_21_1: return 21;
+    case sakura::MinecraftVersion::V1_21_3: return 21;
     default: return 0;
     }
 }
 
 sakura::MinecraftVersion ParseVersionFromText(const std::string& text) {
     std::string lowered = LowerCopy(text);
-    if (lowered.find("1.21") != std::string::npos || lowered.find("1.21.0") != std::string::npos)
+    if (lowered.find("1.21.3") != std::string::npos || lowered.find("1.21.1") != std::string::npos || lowered.find("1.21") != std::string::npos)
+        return sakura::MinecraftVersion::V1_21_3;
+    if (lowered.find("1.21.0") != std::string::npos)
         return sakura::MinecraftVersion::V1_21_0;
-    if (lowered.find("1.20.4") != std::string::npos || lowered.find("1.20.4") != std::string::npos)
+    if (lowered.find("1.20.6") != std::string::npos)
+        return sakura::MinecraftVersion::V1_20_6;
+    if (lowered.find("1.20.4") != std::string::npos)
         return sakura::MinecraftVersion::V1_20_4;
+    if (lowered.find("1.20.2") != std::string::npos)
+        return sakura::MinecraftVersion::V1_20_2;
     if (lowered.find("1.20.1") != std::string::npos || lowered.find("1.20") != std::string::npos)
         return sakura::MinecraftVersion::V1_20_1;
-    if (lowered.find("1.18.2") != std::string::npos || lowered.find("1.18") != std::string::npos)
-        return sakura::MinecraftVersion::V1_18_2;
+    if (lowered.find("1.19.4") != std::string::npos)
+        return sakura::MinecraftVersion::V1_19_4;
+    if (lowered.find("1.19.2") != std::string::npos || lowered.find("1.19") != std::string::npos)
+        return sakura::MinecraftVersion::V1_19_2;
+    if (lowered.find("1.18.3") != std::string::npos || lowered.find("1.18.2") != std::string::npos || lowered.find("1.18") != std::string::npos)
+        return sakura::MinecraftVersion::V1_18_3;
+    if (lowered.find("1.17.1") != std::string::npos || lowered.find("1.17") != std::string::npos)
+        return sakura::MinecraftVersion::V1_17_1;
     if (lowered.find("1.16.5") != std::string::npos || lowered.find("1.16") != std::string::npos)
         return sakura::MinecraftVersion::V1_16_5;
+    if (lowered.find("1.15.2") != std::string::npos || lowered.find("1.15") != std::string::npos)
+        return sakura::MinecraftVersion::V1_15_2;
+    if (lowered.find("1.14.4") != std::string::npos || lowered.find("1.14") != std::string::npos)
+        return sakura::MinecraftVersion::V1_14_4;
+    if (lowered.find("1.13.2") != std::string::npos || lowered.find("1.13") != std::string::npos)
+        return sakura::MinecraftVersion::V1_13_2;
     if (lowered.find("1.12.2") != std::string::npos || lowered.find("1.12") != std::string::npos)
         return sakura::MinecraftVersion::V1_12_2;
-    if (lowered.find("1.8.9") != std::string::npos || lowered.find("1.8") != std::string::npos)
+    if (lowered.find("1.11.2") != std::string::npos || lowered.find("1.11") != std::string::npos)
+        return sakura::MinecraftVersion::V1_11_2;
+    if (lowered.find("1.10.2") != std::string::npos || lowered.find("1.10") != std::string::npos)
+        return sakura::MinecraftVersion::V1_10_2;
+    if (lowered.find("1.9.4") != std::string::npos || lowered.find("1.9") != std::string::npos)
+        return sakura::MinecraftVersion::V1_9_4;
+    if (lowered.find("1.8.9") != std::string::npos)
         return sakura::MinecraftVersion::V1_8_9;
+    if (lowered.find("1.8.8") != std::string::npos)
+        return sakura::MinecraftVersion::V1_8_8;
+    if (lowered.find("1.8") != std::string::npos)
+        return sakura::MinecraftVersion::V1_8_0;
     return sakura::MinecraftVersion::Auto;
 }
 
@@ -129,13 +173,29 @@ namespace sakura {
 const char* ToString(MinecraftVersion version) {
     switch (version) {
     case MinecraftVersion::Auto: return "auto";
+    case MinecraftVersion::V1_8_0: return "1.8.0";
+    case MinecraftVersion::V1_8_8: return "1.8.8";
     case MinecraftVersion::V1_8_9: return "1.8.9";
+    case MinecraftVersion::V1_9_4: return "1.9.4";
+    case MinecraftVersion::V1_10_2: return "1.10.2";
+    case MinecraftVersion::V1_11_2: return "1.11.2";
     case MinecraftVersion::V1_12_2: return "1.12.2";
+    case MinecraftVersion::V1_13_2: return "1.13.2";
+    case MinecraftVersion::V1_14_4: return "1.14.4";
+    case MinecraftVersion::V1_15_2: return "1.15.2";
     case MinecraftVersion::V1_16_5: return "1.16.5";
+    case MinecraftVersion::V1_17_1: return "1.17.1";
     case MinecraftVersion::V1_18_2: return "1.18.2";
+    case MinecraftVersion::V1_18_3: return "1.18.3";
+    case MinecraftVersion::V1_19_2: return "1.19.2";
+    case MinecraftVersion::V1_19_4: return "1.19.4";
     case MinecraftVersion::V1_20_1: return "1.20.1";
+    case MinecraftVersion::V1_20_2: return "1.20.2";
     case MinecraftVersion::V1_20_4: return "1.20.4";
+    case MinecraftVersion::V1_20_6: return "1.20.6";
     case MinecraftVersion::V1_21_0: return "1.21.0";
+    case MinecraftVersion::V1_21_1: return "1.21.1";
+    case MinecraftVersion::V1_21_3: return "1.21.3";
     default: return "unknown";
     }
 }
@@ -160,34 +220,29 @@ bool ParseVersion(const char* value, MinecraftVersion& version) {
         version = MinecraftVersion::Auto;
         return true;
     }
-    if (lower == "1.8.9" || lower == "1.8") {
-        version = MinecraftVersion::V1_8_9;
-        return true;
-    }
-    if (lower == "1.12.2" || lower == "1.12") {
-        version = MinecraftVersion::V1_12_2;
-        return true;
-    }
-    if (lower == "1.16.5" || lower == "1.16") {
-        version = MinecraftVersion::V1_16_5;
-        return true;
-    }
-    if (lower == "1.18.2" || lower == "1.18") {
-        version = MinecraftVersion::V1_18_2;
-        return true;
-    }
-    if (lower == "1.20.1" || lower == "1.20") {
-        version = MinecraftVersion::V1_20_1;
-        return true;
-    }
-    if (lower == "1.20.4") {
-        version = MinecraftVersion::V1_20_4;
-        return true;
-    }
-    if (lower == "1.21.0" || lower == "1.21") {
-        version = MinecraftVersion::V1_21_0;
-        return true;
-    }
+    if (lower == "1.8" || lower == "1.8.0") { version = MinecraftVersion::V1_8_0; return true; }
+    if (lower == "1.8.8") { version = MinecraftVersion::V1_8_8; return true; }
+    if (lower == "1.8.9") { version = MinecraftVersion::V1_8_9; return true; }
+    if (lower == "1.9.4" || lower == "1.9") { version = MinecraftVersion::V1_9_4; return true; }
+    if (lower == "1.10.2" || lower == "1.10") { version = MinecraftVersion::V1_10_2; return true; }
+    if (lower == "1.11.2" || lower == "1.11") { version = MinecraftVersion::V1_11_2; return true; }
+    if (lower == "1.12.2" || lower == "1.12") { version = MinecraftVersion::V1_12_2; return true; }
+    if (lower == "1.13.2" || lower == "1.13") { version = MinecraftVersion::V1_13_2; return true; }
+    if (lower == "1.14.4" || lower == "1.14") { version = MinecraftVersion::V1_14_4; return true; }
+    if (lower == "1.15.2" || lower == "1.15") { version = MinecraftVersion::V1_15_2; return true; }
+    if (lower == "1.16.5" || lower == "1.16") { version = MinecraftVersion::V1_16_5; return true; }
+    if (lower == "1.17.1" || lower == "1.17") { version = MinecraftVersion::V1_17_1; return true; }
+    if (lower == "1.18.2" || lower == "1.18") { version = MinecraftVersion::V1_18_2; return true; }
+    if (lower == "1.18.3") { version = MinecraftVersion::V1_18_3; return true; }
+    if (lower == "1.19.2" || lower == "1.19") { version = MinecraftVersion::V1_19_2; return true; }
+    if (lower == "1.19.4") { version = MinecraftVersion::V1_19_4; return true; }
+    if (lower == "1.20.1" || lower == "1.20") { version = MinecraftVersion::V1_20_1; return true; }
+    if (lower == "1.20.2") { version = MinecraftVersion::V1_20_2; return true; }
+    if (lower == "1.20.4") { version = MinecraftVersion::V1_20_4; return true; }
+    if (lower == "1.20.6") { version = MinecraftVersion::V1_20_6; return true; }
+    if (lower == "1.21" || lower == "1.21.0") { version = MinecraftVersion::V1_21_0; return true; }
+    if (lower == "1.21.1") { version = MinecraftVersion::V1_21_1; return true; }
+    if (lower == "1.21.3") { version = MinecraftVersion::V1_21_3; return true; }
     return false;
 }
 
@@ -199,26 +254,11 @@ bool ParseLoader(const char* value, ModLoader& loader) {
         loader = ModLoader::Auto;
         return true;
     }
-    if (lower == "vanilla") {
-        loader = ModLoader::Vanilla;
-        return true;
-    }
-    if (lower == "forge") {
-        loader = ModLoader::Forge;
-        return true;
-    }
-    if (lower == "neoforge") {
-        loader = ModLoader::NeoForge;
-        return true;
-    }
-    if (lower == "fabric") {
-        loader = ModLoader::Fabric;
-        return true;
-    }
-    if (lower == "quilt") {
-        loader = ModLoader::Quilt;
-        return true;
-    }
+    if (lower == "vanilla") { loader = ModLoader::Vanilla; return true; }
+    if (lower == "forge") { loader = ModLoader::Forge; return true; }
+    if (lower == "neoforge") { loader = ModLoader::NeoForge; return true; }
+    if (lower == "fabric") { loader = ModLoader::Fabric; return true; }
+    if (lower == "quilt") { loader = ModLoader::Quilt; return true; }
     return false;
 }
 
@@ -252,9 +292,8 @@ RuntimeProfile DetectRuntimeProfileForMinecraftHome(const std::string& minecraft
         std::string versionDir = JoinPath(versionsRoot, findData.cFileName);
         std::string versionJson = JoinPath(versionDir, std::string(findData.cFileName) + ".json");
         std::string loaderText = {};
-        if (PathExists(versionJson)) {
+        if (PathExists(versionJson))
             loaderText = ReadTextFile(versionJson);
-        }
         if (loaderText.empty()) {
             std::string manifest = JoinPath(versionDir, "version.json");
             if (PathExists(manifest))
