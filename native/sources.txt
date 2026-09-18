@@ -19,3 +19,4 @@ native/world_snapshot.cpp
 native/status_response.cpp
 native/runtime_profile.cpp
 native/runtime_adapter.cpp
+native/compatibility_gate.cpp
