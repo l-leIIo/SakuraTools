@@ -1,218 +1,141 @@
-#include "runtime_adapter.h"
-#include "jni_lookup.h"
 #include "proxy.h"
+#include "runtime_adapter.h"
+#include "runtime_profile.h"
+#include "trampolines.h"
+#include "relay_handler.h"
+#include "connection_hook.h"
+#include "b_server.h"
+#include "runtime_gate.h"
+#include "../injector/RuntimeControl.h"
 
-#include <cstring>
+#include <cstdio>
 
-namespace sakura {
+sakura::RuntimeProfile g_runtimeProfile = sakura::DefaultRuntimeProfile();
+
 namespace {
 
-static const ClassCandidate kLegacyConnection[] = {
-    {"net.minecraft.network.NetworkManager", "func_150729_e", "net.minecraft.class_2535", "Lnet/minecraft/network/NetworkManager;"},
-};
-static const ClassCandidate kModernConnection[] = {
-    {"net.minecraft.network.Connection", "NetworkManager", "net.minecraft.class_2535", "Lnet/minecraft/network/Connection;"},
-};
-static const ClassCandidate kLegacyListener[] = {
-    {"net.minecraft.client.network.NetHandlerPlayClient", "field_147125_b", "net.minecraft.class_634", "Lnet/minecraft/client/network/NetHandlerPlayClient;"},
-};
-static const ClassCandidate kModernListener[] = {
-    {"net.minecraft.client.multiplayer.ClientPacketListener", "f_104699_", "net.minecraft.class_634", "Lnet/minecraft/client/multiplayer/ClientPacketListener;"},
-};
-
-static const MethodCandidate kLegacyMinecraftInstance[] = {
-    {"getMinecraft", "func_71410_x", "", "()Lnet/minecraft/client/Minecraft;", true},
-};
-static const MethodCandidate kModernMinecraftInstance[] = {
-    {"getInstance", "m_91087_", "", "()Lnet/minecraft/client/Minecraft;", true},
-};
-static const MethodCandidate kLegacyMinecraftConnection[] = {
-    {"getConnection", "func_147114_u", "", "()Lnet/minecraft/client/network/NetHandlerPlayClient;", false},
-};
-static const MethodCandidate kModernMinecraftConnection[] = {
-    {"getConnection", "m_91403_", "", "()Lnet/minecraft/client/multiplayer/ClientPacketListener;", false},
-};
-static const MethodCandidate kLegacyListenerConnection[] = {
-    {"getNetworkManager", "func_147298_b", "", "()Lnet/minecraft/network/NetworkManager;", false},
-};
-static const MethodCandidate kModernListenerConnection[] = {
-    {"getConnection", "m_104910_", "", "()Lnet/minecraft/network/Connection;", false},
-};
-static const MethodCandidate kLegacyHelloName[] = {
-    {"getName", "field_149306_a", "", "()Ljava/lang/String;", false},
-};
-static const MethodCandidate kModernHelloName[] = {
-    {"getName", "m_123097_", "", "()Ljava/lang/String;", false},
-};
-
-static const RuntimeAdapter kAdapters[] = {
-    {MinecraftVersion::V1_8_0, ModLoader::Vanilla, "1.8.x vanilla legacy", kLegacyConnection, 1, kLegacyListener, 1, kLegacyMinecraftInstance, 1, kLegacyMinecraftConnection, 1, kLegacyListenerConnection, 1, kLegacyHelloName, 1},
-    {MinecraftVersion::V1_8_0, ModLoader::Forge, "1.8.x Forge legacy", kLegacyConnection, 1, kLegacyListener, 1, kLegacyMinecraftInstance, 1, kLegacyMinecraftConnection, 1, kLegacyListenerConnection, 1, kLegacyHelloName, 1},
-    {MinecraftVersion::V1_8_8, ModLoader::Vanilla, "1.8.8 vanilla legacy", kLegacyConnection, 1, kLegacyListener, 1, kLegacyMinecraftInstance, 1, kLegacyMinecraftConnection, 1, kLegacyListenerConnection, 1, kLegacyHelloName, 1},
-    {MinecraftVersion::V1_8_8, ModLoader::Forge, "1.8.8 Forge legacy", kLegacyConnection, 1, kLegacyListener, 1, kLegacyMinecraftInstance, 1, kLegacyMinecraftConnection, 1, kLegacyListenerConnection, 1, kLegacyHelloName, 1},
-    {MinecraftVersion::V1_8_9, ModLoader::Vanilla, "1.8.9 vanilla legacy", kLegacyConnection, 1, kLegacyListener, 1, kLegacyMinecraftInstance, 1, kLegacyMinecraftConnection, 1, kLegacyListenerConnection, 1, kLegacyHelloName, 1},
-    {MinecraftVersion::V1_8_9, ModLoader::Forge, "1.8.9 Forge legacy", kLegacyConnection, 1, kLegacyListener, 1, kLegacyMinecraftInstance, 1, kLegacyMinecraftConnection, 1, kLegacyListenerConnection, 1, kLegacyHelloName, 1},
-    {MinecraftVersion::V1_9_4, ModLoader::Vanilla, "1.9.4 vanilla legacy", kLegacyConnection, 1, kLegacyListener, 1, kLegacyMinecraftInstance, 1, kLegacyMinecraftConnection, 1, kLegacyListenerConnection, 1, kLegacyHelloName, 1},
-    {MinecraftVersion::V1_9_4, ModLoader::Forge, "1.9.4 Forge legacy", kLegacyConnection, 1, kLegacyListener, 1, kLegacyMinecraftInstance, 1, kLegacyMinecraftConnection, 1, kLegacyListenerConnection, 1, kLegacyHelloName, 1},
-    {MinecraftVersion::V1_10_2, ModLoader::Vanilla, "1.10.2 vanilla legacy", kLegacyConnection, 1, kLegacyListener, 1, kLegacyMinecraftInstance, 1, kLegacyMinecraftConnection, 1, kLegacyListenerConnection, 1, kLegacyHelloName, 1},
-    {MinecraftVersion::V1_10_2, ModLoader::Forge, "1.10.2 Forge legacy", kLegacyConnection, 1, kLegacyListener, 1, kLegacyMinecraftInstance, 1, kLegacyMinecraftConnection, 1, kLegacyListenerConnection, 1, kLegacyHelloName, 1},
-    {MinecraftVersion::V1_11_2, ModLoader::Vanilla, "1.11.2 vanilla legacy", kLegacyConnection, 1, kLegacyListener, 1, kLegacyMinecraftInstance, 1, kLegacyMinecraftConnection, 1, kLegacyListenerConnection, 1, kLegacyHelloName, 1},
-    {MinecraftVersion::V1_11_2, ModLoader::Forge, "1.11.2 Forge legacy", kLegacyConnection, 1, kLegacyListener, 1, kLegacyMinecraftInstance, 1, kLegacyMinecraftConnection, 1, kLegacyListenerConnection, 1, kLegacyHelloName, 1},
-    {MinecraftVersion::V1_12_2, ModLoader::Vanilla, "1.12.2 vanilla legacy", kLegacyConnection, 1, kLegacyListener, 1, kLegacyMinecraftInstance, 1, kLegacyMinecraftConnection, 1, kLegacyListenerConnection, 1, kLegacyHelloName, 1},
-    {MinecraftVersion::V1_12_2, ModLoader::Forge, "1.12.2 Forge legacy", kLegacyConnection, 1, kLegacyListener, 1, kLegacyMinecraftInstance, 1, kLegacyMinecraftConnection, 1, kLegacyListenerConnection, 1, kLegacyHelloName, 1},
-    {MinecraftVersion::V1_13_2, ModLoader::Vanilla, "1.13.2 vanilla transitional", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_13_2, ModLoader::Forge, "1.13.2 Forge transitional", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_14_4, ModLoader::Vanilla, "1.14.4 vanilla transitional", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_14_4, ModLoader::Forge, "1.14.4 Forge transitional", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_15_2, ModLoader::Vanilla, "1.15.2 vanilla transitional", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_15_2, ModLoader::Forge, "1.15.2 Forge transitional", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_16_5, ModLoader::Vanilla, "1.16.5 vanilla transitional", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_16_5, ModLoader::Forge, "1.16.5 Forge transitional", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_16_5, ModLoader::Fabric, "1.16.5 Fabric transitional", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_17_1, ModLoader::Vanilla, "1.17.1 vanilla modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_17_1, ModLoader::Forge, "1.17.1 Forge modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_18_2, ModLoader::Vanilla, "1.18.2 vanilla modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_18_2, ModLoader::Forge, "1.18.2 Forge modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_18_2, ModLoader::Fabric, "1.18.2 Fabric modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_18_2, ModLoader::Quilt, "1.18.2 Quilt modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_18_3, ModLoader::Vanilla, "1.18.3 vanilla modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_18_3, ModLoader::Forge, "1.18.3 Forge modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_19_2, ModLoader::Vanilla, "1.19.2 vanilla modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_19_2, ModLoader::Forge, "1.19.2 Forge modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_19_2, ModLoader::Fabric, "1.19.2 Fabric modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_19_2, ModLoader::Quilt, "1.19.2 Quilt modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_19_4, ModLoader::Vanilla, "1.19.4 vanilla modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_19_4, ModLoader::Forge, "1.19.4 Forge modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_19_4, ModLoader::NeoForge, "1.19.4 NeoForge modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_19_4, ModLoader::Fabric, "1.19.4 Fabric modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_19_4, ModLoader::Quilt, "1.19.4 Quilt modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_20_1, ModLoader::Vanilla, "1.20.1 vanilla modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_20_1, ModLoader::Forge, "1.20.1 Forge modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_20_1, ModLoader::NeoForge, "1.20.1 NeoForge modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_20_1, ModLoader::Fabric, "1.20.1 Fabric modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_20_1, ModLoader::Quilt, "1.20.1 Quilt modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_20_2, ModLoader::Vanilla, "1.20.2 vanilla modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_20_2, ModLoader::Forge, "1.20.2 Forge modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_20_2, ModLoader::NeoForge, "1.20.2 NeoForge modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_20_4, ModLoader::Vanilla, "1.20.4 vanilla modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_20_4, ModLoader::Forge, "1.20.4 Forge modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_20_4, ModLoader::NeoForge, "1.20.4 NeoForge modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_20_4, ModLoader::Fabric, "1.20.4 Fabric modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_20_4, ModLoader::Quilt, "1.20.4 Quilt modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_20_6, ModLoader::Vanilla, "1.20.6 vanilla modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_20_6, ModLoader::NeoForge, "1.20.6 NeoForge modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_21_0, ModLoader::Vanilla, "1.21.0 vanilla modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_21_0, ModLoader::Fabric, "1.21.0 Fabric modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_21_0, ModLoader::NeoForge, "1.21.0 NeoForge modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_21_1, ModLoader::Vanilla, "1.21.1 vanilla modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_21_1, ModLoader::Fabric, "1.21.1 Fabric modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_21_1, ModLoader::NeoForge, "1.21.1 NeoForge modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_21_3, ModLoader::Vanilla, "1.21.3 vanilla modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_21_3, ModLoader::Fabric, "1.21.3 Fabric modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-    {MinecraftVersion::V1_21_3, ModLoader::NeoForge, "1.21.3 NeoForge modern", kModernConnection, 1, kModernListener, 1, kModernMinecraftInstance, 1, kModernMinecraftConnection, 1, kModernListenerConnection, 1, kModernHelloName, 1},
-};
-
-jclass FindClassCandidate(JNIEnv* env, jobject loader, const ClassCandidate& candidate) {
-    if (candidate.officialName && *candidate.officialName) {
-        jclass klass = LoadClassInLoader(env, loader, candidate.officialName);
-        if (klass) return klass;
-    }
-    if (candidate.srgName && *candidate.srgName) {
-        jclass klass = LoadClassInLoader(env, loader, candidate.srgName);
-        if (klass) return klass;
-    }
-    if (candidate.yarnName && *candidate.yarnName) {
-        jclass klass = LoadClassInLoader(env, loader, candidate.yarnName);
-        if (klass) return klass;
-    }
-    if (candidate.descriptor && *candidate.descriptor) {
-        // Descriptor fallback: if already loaded by the JVM, resolve by signature.
-        jclass klass = proxy_server::findLoadedBySig(env, candidate.descriptor);
-        if (klass) return klass;
-    }
-    return nullptr;
+bool deletePressed(DeleteKeyEdge& edge) {
+    DWORD foregroundPid = 0;
+    HWND window = GetForegroundWindow();
+    if (window) GetWindowThreadProcessId(window, &foregroundPid);
+    return edge.update((GetAsyncKeyState(VK_DELETE) & 0x8000) != 0,
+                       foregroundPid == GetCurrentProcessId());
 }
 
-jmethodID FindMethodCandidate(JNIEnv* env, jclass klass, const MethodCandidate& candidate) {
-    if (candidate.officialName && *candidate.officialName) {
-        jmethodID id = env->GetMethodID(klass, candidate.officialName, candidate.descriptor);
-        if (id || !env->ExceptionCheck()) return id;
-        env->ExceptionClear();
+bool startSession(JNIEnv* env, DeleteKeyEdge& edge) {
+    const sakura::RuntimeAdapter* adapter = sakura::SelectRuntimeAdapter(g_runtimeProfile);
+    if (!adapter) {
+        LogTo("START: no adapter for selected version/loader");
+        return false;
     }
-    if (candidate.srgName && *candidate.srgName) {
-        jmethodID id = env->GetMethodID(klass, candidate.srgName, candidate.descriptor);
-        if (id || !env->ExceptionCheck()) return id;
-        env->ExceptionClear();
+    jobject loader = GetMinecraftClassLoader(env, g_jvmti);
+    if (!loader || !sakura::ValidateRuntimeAdapter(env, loader, *adapter)) {
+        LogTo("START: selected adapter classes were not found; refusing unsafe injection");
+        if (loader) env->DeleteLocalRef(loader);
+        return false;
     }
-    if (candidate.yarnName && *candidate.yarnName) {
-        jmethodID id = env->GetMethodID(klass, candidate.yarnName, candidate.descriptor);
-        if (id || !env->ExceptionCheck()) return id;
-        env->ExceptionClear();
+    sakura::LogRuntimeAdapter(*adapter);
+    env->DeleteLocalRef(loader);
+
+    LogTo("START: enabling proxy; version=%s loader=%s source=%s",
+          sakura::ToString(g_runtimeProfile.version), sakura::ToString(g_runtimeProfile.loader),
+          g_runtimeProfile.source.c_str());
+    bool installed = false;
+    for (int i = 0; i < 240; ++i) {
+        if (deletePressed(edge)) return false;
+        if (InstallHookBridge(env)) { installed = true; break; }
+        Sleep(100);
     }
-    if (candidate.descriptor && *candidate.descriptor) {
-        return proxy_server::findMethodByDescriptor(klass, candidate.descriptor, candidate.isStatic);
+    if (!installed || !InstallRelayHandler(env)) return false;
+    g_runtimeGate.start();
+    if (!InstallConnectionHook(env) || !InstallBServer(env)) return false;
+
+    LiveConnectionState connection = LiveConnectionState::Failed;
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        if (deletePressed(edge)) return false;
+        if (env->PushLocalFrame(128) != JNI_OK) { env->ExceptionClear(); return false; }
+        connection = BServer_TryCaptureLiveConnection(env);
+        env->PopLocalFrame(nullptr);
+        if (connection != LiveConnectionState::Failed) break;
+        Sleep(100);
     }
-    return nullptr;
+    if (connection == LiveConnectionState::Failed) return false;
+    if (connection == LiveConnectionState::NotConnected && !BServer_BlockAMainThreadUntilBConnected(env)) return false;
+    LogTo("START: active on port 25565");
+    return true;
 }
 
-const RuntimeAdapter* FindExact(MinecraftVersion version, ModLoader loader) {
-    for (const RuntimeAdapter& adapter : kAdapters)
-        if (adapter.version == version && adapter.loader == loader)
-            return &adapter;
-    return nullptr;
+bool stopSession(JNIEnv* env) {
+    BServer_RequestStop();
+    if (!g_runtimeGate.stopFor(std::chrono::milliseconds(1000))) return false;
+    return StopBServer(env) && UninstallConnectionHook(env) && RelayHandler_DetachAll(env);
 }
 
-const RuntimeAdapter* FindNearestVersion(MinecraftVersion version) {
-    int currentBest = INT_MAX;
-    const RuntimeAdapter* best = nullptr;
-    for (const RuntimeAdapter& adapter : kAdapters) {
-        if (adapter.loader != ModLoader::Vanilla && adapter.loader != ModLoader::Forge && adapter.loader != ModLoader::NeoForge && adapter.loader != ModLoader::Fabric && adapter.loader != ModLoader::Quilt)
-            continue;
-        int delta = std::abs(static_cast<int>(adapter.version) - static_cast<int>(version));
-        if (delta < currentBest) {
-            currentBest = delta;
-            best = &adapter;
+DWORD WINAPI RuntimeThread(LPVOID) {
+    char eventName[96];
+    std::snprintf(eventName, sizeof(eventName), SAKURA_RESUME_PREFIX "%lu", GetCurrentProcessId());
+    HANDLE resume = CreateEventA(nullptr, FALSE, FALSE, eventName);
+    if (!resume) return 0;
+    if (GetLastError() == ERROR_ALREADY_EXISTS) { SetEvent(resume); CloseHandle(resume); return 0; }
+
+    g_runtimeProfile = sakura::LoadRuntimeProfile();
+    LogTo("Runtime: version=%s loader=%s source=%s", sakura::ToString(g_runtimeProfile.version),
+          sakura::ToString(g_runtimeProfile.loader), g_runtimeProfile.source.c_str());
+
+    HMODULE jvm = nullptr;
+    for (int i = 0; i < 600 && !jvm; ++i) { jvm = GetModuleHandleA("jvm.dll"); if (!jvm) Sleep(100); }
+    using GetVms = jint (JNICALL*)(JavaVM**, jsize, jsize*);
+    auto getVms = jvm ? reinterpret_cast<GetVms>(GetProcAddress(jvm, "JNI_GetCreatedJavaVMs")) : nullptr;
+    if (getVms) {
+        for (int i = 0; i < 600; ++i) {
+            jsize count = 0;
+            if (getVms(&g_vm, 1, &count) == JNI_OK && count && g_vm) break;
+            g_vm = nullptr;
+            Sleep(100);
         }
     }
-    return best;
+    JNIEnv* env = nullptr;
+    JavaVMAttachArgs args{JNI_VERSION_1_8, const_cast<char*>("SakuraToolsRuntime"), nullptr};
+    if (!g_vm || g_vm->AttachCurrentThreadAsDaemon(reinterpret_cast<void**>(&env), &args) != JNI_OK) { CloseHandle(resume); return 0; }
+    if (g_vm->GetEnv(reinterpret_cast<void**>(&g_jvmti), JVMTI_VERSION_1_2) != JNI_OK) { g_vm->DetachCurrentThread(); CloseHandle(resume); return 0; }
+
+    DeleteKeyEdge edge;
+    bool active = false, clean = true, requested = true;
+    ULONGLONG retryAt = 0;
+    for (;;) {
+        if (active) BServer_CheckLoginTimeout(env);
+        if (!active && !clean && GetTickCount64() >= retryAt) {
+            if (env->PushLocalFrame(512) == JNI_OK) { clean = stopSession(env); env->PopLocalFrame(nullptr); }
+            retryAt = GetTickCount64() + 1000;
+        }
+        if (requested && !active && clean) {
+            requested = false;
+            if (env->PushLocalFrame(512) == JNI_OK) { active = startSession(env, edge); if (!active) clean = stopSession(env); env->PopLocalFrame(nullptr); }
+        }
+        if (deletePressed(edge) && (active || requested)) {
+            ResetEvent(resume); requested = false;
+            if (env->PushLocalFrame(512) == JNI_OK) { clean = stopSession(env); active = false; env->PopLocalFrame(nullptr); }
+        }
+        DWORD wait = WaitForSingleObject(resume, active ? 25 : 250);
+        if (wait == WAIT_OBJECT_0 && !active) requested = true;
+        if (wait == WAIT_FAILED) break;
+    }
+    g_vm->DetachCurrentThread();
+    CloseHandle(resume);
+    return 0;
 }
 
 } // namespace
 
-const RuntimeAdapter* FindRuntimeAdapter(MinecraftVersion version, ModLoader loader) {
-    if (loader == ModLoader::Auto) loader = ModLoader::Vanilla;
-    if (const RuntimeAdapter* exact = FindExact(version, loader))
-        return exact;
-    if (const RuntimeAdapter* fallback = FindExact(version, ModLoader::Forge))
-        return fallback;
-    if (const RuntimeAdapter* fallback = FindExact(version, ModLoader::Vanilla))
-        return fallback;
-    if (const RuntimeAdapter* nearest = FindNearestVersion(version))
-        return nearest;
-    return nullptr;
+void InitializeProxy(JNIEnv*) {
+    HANDLE thread = CreateThread(nullptr, 0, RuntimeThread, nullptr, 0, nullptr);
+    if (thread) CloseHandle(thread);
 }
 
-const RuntimeAdapter* SelectRuntimeAdapter(const RuntimeProfile& profile) {
-    return FindRuntimeAdapter(profile.version, profile.loader);
-}
-
-bool ValidateRuntimeAdapter(JNIEnv* env, jobject classLoader, const RuntimeAdapter& adapter) {
-    bool connection = false;
-    bool listener = false;
-    for (size_t i = 0; i < adapter.connectionClassCount; ++i) {
-        jclass klass = FindClassCandidate(env, classLoader, adapter.connectionClasses[i]);
-        if (klass) { connection = true; env->DeleteLocalRef(klass); break; }
+BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_ATTACH) {
+        DisableThreadLibraryCalls(module);
+        InitializeProxy(nullptr);
     }
-    for (size_t i = 0; i < adapter.listenerClassCount; ++i) {
-        jclass klass = FindClassCandidate(env, classLoader, adapter.listenerClasses[i]);
-        if (klass) { listener = true; env->DeleteLocalRef(klass); break; }
-    }
-    return connection && listener;
+    return TRUE;
 }
-
-void LogRuntimeAdapter(const RuntimeAdapter& adapter) {
-    LogTo("Adapter: %s | connection=%s | listener=%s", adapter.displayName,
-          adapter.connectionClasses[0].officialName, adapter.listenerClasses[0].officialName);
-}
-
-} // namespace sakura

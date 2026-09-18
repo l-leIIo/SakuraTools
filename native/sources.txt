@@ -18,5 +18,4 @@ native/server/teams.cpp
 native/world_snapshot.cpp
 native/status_response.cpp
 native/runtime_profile.cpp
-native/runtime_profile_global.cpp
 native/runtime_adapter.cpp
