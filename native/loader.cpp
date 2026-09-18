@@ -1,10 +1,6 @@
 #include "proxy.h"
-#include "trampolines.h"
-#include "relay_handler.h"
-#include "connection_hook.h"
-#include "b_server.h"
-#include "runtime_gate.h"
-#include "../injector/RuntimeControl.h"
+
+#include "runtime_profile.h"
 
 #include <cstdio>
 
@@ -20,6 +16,10 @@ bool deletePressed(DeleteKeyEdge& edge) {
 
 bool startSession(JNIEnv* env, DeleteKeyEdge& edge) {
     LogTo("START: enabling proxy");
+    LogTo("START: runtime profile version=%s loader=%s source=%s",
+          sakura::ToString(g_runtimeProfile.version),
+          sakura::ToString(g_runtimeProfile.loader),
+          g_runtimeProfile.source.c_str());
     LogTo("BUILD: native-snapshot %s %s pid=%lu", __DATE__, __TIME__, GetCurrentProcessId());
     bool installed = false;
     for (int i = 0; i < 240; ++i) {
@@ -54,7 +54,6 @@ bool startSession(JNIEnv* env, DeleteKeyEdge& edge) {
 
 bool stopSession(JNIEnv* env) {
     LogTo("STOP: draining native callbacks");
-    // Release the render-thread gate before waiting for callbacks that may need it.
     BServer_RequestStop();
     if (!g_runtimeGate.stopFor(std::chrono::milliseconds(1000))) {
         LogTo("STOP: callbacks still running; cleanup will retry");
@@ -79,7 +78,12 @@ DWORD WINAPI RuntimeThread(LPVOID) {
         return 0;
     }
 
+    g_runtimeProfile = sakura::LoadRuntimeProfile();
     LogTo("Runtime: resident controller started");
+    LogTo("Runtime: resolved version=%s loader=%s source=%s",
+          sakura::ToString(g_runtimeProfile.version),
+          sakura::ToString(g_runtimeProfile.loader),
+          g_runtimeProfile.source.c_str());
     HMODULE jvm = nullptr;
     for (int i = 0; i < 600 && !jvm; ++i) {
         jvm = GetModuleHandleA("jvm.dll");
@@ -137,7 +141,6 @@ DWORD WINAPI RuntimeThread(LPVOID) {
             }
         }
         if (deletePressed(edge) && (active || requested)) {
-            // Ignore duplicate start requests made before this stop.
             ResetEvent(resume);
             requested = false;
             if (env->PushLocalFrame(512) == JNI_OK) {
@@ -168,6 +171,7 @@ void InitializeProxy(JNIEnv*) {
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(module);
+        g_runtimeProfile = sakura::LoadRuntimeProfile();
         InitializeProxy(nullptr);
     }
     return TRUE;

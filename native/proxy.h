@@ -1,42 +1,71 @@
+cmake_minimum_required(VERSION 3.21)
+project(MinecraftInjectedProxy LANGUAGES C CXX)
 
+if(MSVC AND DEFINED PROXY_MSVC_INCLUDE_PREFIX)
+    set(CMAKE_CL_SHOWINCLUDES_PREFIX "${PROXY_MSVC_INCLUDE_PREFIX}")
+endif()
 
-#pragma once
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
+if(NOT WIN32)
+    message(FATAL_ERROR "The DLL targets Windows. For Zig cross-compilation use scripts/build.sh.")
+endif()
+if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "Use an x64 compiler: the reflective loader targets 64-bit Minecraft.")
+endif()
 
-#include "include/jni.h"
-#include "include/jvmti.h"
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS native/sources.txt)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/native/sources.txt" PROXY_SOURCES)
 
-#include <string>
+add_library(proxy_build_options INTERFACE)
+target_compile_definitions(proxy_build_options INTERFACE
+    REFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN WIN_X64
+    NOMINMAX _CRT_SECURE_NO_WARNINGS)
+if(MSVC)
+    target_compile_options(proxy_build_options INTERFACE /utf-8
+        $<$<COMPILE_LANGUAGE:CXX>:/EHsc>
+        $<$<CONFIG:Release>:/O2>)
+endif()
 
-extern JavaVM*    g_vm;
-extern jvmtiEnv*  g_jvmti;
+add_library(MinecraftProxy_msvc SHARED ${PROXY_SOURCES})
+target_include_directories(MinecraftProxy_msvc PRIVATE native native/include)
+target_link_libraries(MinecraftProxy_msvc PRIVATE
+    proxy_build_options psapi ws2_32 kernel32 user32 advapi32)
+set_target_properties(MinecraftProxy_msvc PROPERTIES OUTPUT_NAME Meadow)
 
-struct JniAttach {
-    JNIEnv* env = nullptr;
-    bool    attached = false;
+set(INJECTION_SOURCES
+    injector/Inject.c
+    injector/LoadLibraryR.c
+    injector/GetProcAddressR.c)
 
-    JniAttach();
-    ~JniAttach();
+add_executable(reflective_injector injector/cli.c ${INJECTION_SOURCES})
+target_include_directories(reflective_injector PRIVATE injector)
+target_link_libraries(reflective_injector PRIVATE
+    proxy_build_options advapi32 iphlpapi kernel32 user32)
+set_target_properties(reflective_injector PROPERTIES OUTPUT_NAME Canvas)
 
-    JNIEnv* operator->() const { return env; }
-    explicit operator bool() const { return env != nullptr; }
-};
+add_library(starain_inject SHARED native/jni_inject.cpp ${INJECTION_SOURCES})
+target_include_directories(starain_inject PRIVATE native/include injector)
+target_link_libraries(starain_inject PRIVATE proxy_build_options kernel32 user32)
+set_target_properties(starain_inject PROPERTIES OUTPUT_NAME Ribbon)
 
-void Dbg(const char* fmt, ...);
+set(PROXY_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proxy")
+foreach(target MinecraftProxy_msvc reflective_injector starain_inject)
+    set_target_properties(${target} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${PROXY_OUTPUT_DIR}"
+        LIBRARY_OUTPUT_DIRECTORY "${PROXY_OUTPUT_DIR}")
+    foreach(config Debug Release RelWithDebInfo MinSizeRel ${CMAKE_CONFIGURATION_TYPES})
+        string(TOUPPER "${config}" config_upper)
+        set_target_properties(${target} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY_${config_upper} "${PROXY_OUTPUT_DIR}"
+            LIBRARY_OUTPUT_DIRECTORY_${config_upper} "${PROXY_OUTPUT_DIR}")
+    endforeach()
+endforeach()
 
-void LogTo(const char* fmt, ...);
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
 
-void LogAndClearException(JNIEnv* env, const char* where);
-
-jobject GetMinecraftClassLoader(JNIEnv* env, jvmtiEnv* jvmti);
-
-jclass LoadClassInLoader(JNIEnv* env, jobject classLoader, const char* dotName);
-
-void InitializeProxy(JNIEnv* env);
