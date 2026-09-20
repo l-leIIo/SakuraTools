@@ -1,7 +1,6 @@
 #include "b_server.h"
 
 #include "classfile.h"
-#include "mc_compat.h"
 #include "random_name.h"
 #include "relay_handler.h"
 #include "world_cache.h"
@@ -209,7 +208,6 @@ struct BServer {
     jmethodID loginPacketCtor         = nullptr;
     jclass    optionalCls             = nullptr;
     jmethodID optionalEmptyMid        = nullptr;
-    MinecraftRuntime runtime          = MinecraftRuntime::Unknown;
 };
 BServer g_bs;
 
@@ -265,7 +263,7 @@ int findMethodsByDesc(jclass klass, const char* desc, bool wantStatic,
 }
 
 jmethodID findMethodByDescExcl(jclass klass, const char* desc, bool wantStatic,
-                               const char* const* excl, int nExcl) {
+                                const char* const* excl, int nExcl) {
     jint count = 0;
     jmethodID* mids = nullptr;
     if (g_jvmti->GetClassMethods(klass, &count, &mids) != JVMTI_ERROR_NONE) return nullptr;
@@ -824,29 +822,6 @@ bool cacheJavaRefs(JNIEnv* env, jobject mcLoader) {
         if (env->ExceptionCheck()) env->ExceptionClear();
         env->DeleteLocalRef(unpCls);
     }
-
-    jclass loginCls = loadOrFind(env, mcLoader,
-        "net.minecraft.network.protocol.game.ClientboundLoginPacket",
-        "Lnet/minecraft/network/protocol/game/ClientboundLoginPacket;");
-    if (loginCls) {
-        g_bs.loginPacketCls = static_cast<jclass>(env->NewGlobalRef(loginCls));
-        g_bs.runtime = DetectMinecraftRuntime(env, mcLoader);
-        const char* modernLoginDescs[] = {
-            "(IZLnet/minecraft/network/CommonListenerCookie;Ljava/util/Set;Lnet/minecraft/resources/ResourceKey;Lnet/minecraft/core/RegistryAccess$Frozen;Lnet/minecraft/world/level/WorldDataConfiguration;Lnet/minecraft/world/level/GameType;Lnet/minecraft/world/level/GameType;Lnet/minecraft/server/level/BiomeManager$NoiseInfo;IIZZLjava/util/Optional;I)V",
-            "(IZLnet/minecraft/network/CommonListenerCookie;Ljava/util/Set;Lnet/minecraft/resources/ResourceKey;Lnet/minecraft/core/RegistryAccess$Frozen;Lnet/minecraft/world/level/WorldDataConfiguration;Lnet/minecraft/world/level/game/GameType;Lnet/minecraft/world/level/game/GameType;Lnet/minecraft/server/level/BiomeManager$NoiseInfo;IIZZLjava/util/Optional;I)V",
-            "(IZLnet/minecraft/network/CommonListenerCookie;Ljava/util/Set;Lnet/minecraft/resources/ResourceKey;Lnet/minecraft/core/RegistryAccess$Frozen;Lnet/minecraft/world/level/WorldDataConfiguration;Lnet/minecraft/world/level/GameType;Lnet/minecraft/world/level/GameType;Lnet/minecraft/server/level/BiomeManager$NoiseInfo;IIZZLjava/util/Optional;I)V"
-        };
-        g_bs.loginPacketCtor = FindFirstConstructorByDescriptor(
-            env, loginCls, modernLoginDescs, 3);
-        if (!g_bs.loginPacketCtor) {
-            g_bs.loginPacketCtor = FindConstructorByDescriptor(
-                env, loginCls,
-                "(IZLnet/minecraft/world/level/GameType;Lnet/minecraft/world/level/GameType;Ljava/util/Set;Lnet/minecraft/core/RegistryAccess$Frozen;Lnet/minecraft/resources/ResourceKey;Lnet/minecraft/resources/ResourceKey;JIIIZZZZLjava/util/Optional;I)V");
-        }
-        LogTo("BServer: runtime=%s, loginCtor=%p", MinecraftRuntimeName(g_bs.runtime), (void*)g_bs.loginPacketCtor);
-        env->DeleteLocalRef(loginCls);
-    }
-
     jclass piuCls = loadOrFind(env, mcLoader,
         "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket",
         "Lnet/minecraft/network/protocol/game/ClientboundPlayerInfoUpdatePacket;");
@@ -867,7 +842,330 @@ bool cacheJavaRefs(JNIEnv* env, jobject mcLoader) {
         env->DeleteLocalRef(piuCls);
     }
 
+    jclass piEntryCls = loadOrFind(env, mcLoader,
+        "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket$Entry",
+        "Lnet/minecraft/network/protocol/game/ClientboundPlayerInfoUpdatePacket$Entry;");
+    if (piEntryCls) {
+        g_bs.piEntryCls = static_cast<jclass>(env->NewGlobalRef(piEntryCls));
+        g_bs.piEntryProfileIdMid   = findMethodByDesc(piEntryCls, "()Ljava/util/UUID;", false);
+        g_bs.piEntryGameModeMid     = findMethodByDesc(piEntryCls,
+            "()Lnet/minecraft/world/level/GameType;", false);
+        g_bs.piEntryListedMid       = findMethodByDesc(piEntryCls, "()Z", false);
+        static const char* const kHashExcl[] = { "hashCode" };
+        g_bs.piEntryLatencyMid      = findMethodByDescExcl(piEntryCls, "()I", false, kHashExcl, 1);
+        g_bs.piEntryDisplayNameMid  = findMethodByDesc(piEntryCls,
+            "()Lnet/minecraft/network/chat/Component;", false);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(piEntryCls);
+    }
+
+    jclass gameTypeCls = loadOrFind(env, mcLoader, "net.minecraft.world.level.GameType",
+                                    "Lnet/minecraft/world/level/GameType;");
+    if (gameTypeCls) {
+        static const char* const kIdExcl[] = { "ordinal", "hashCode" };
+        g_bs.gameTypeGetIdMid = findMethodByDescExcl(gameTypeCls, "()I", false, kIdExcl, 2);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(gameTypeCls);
+    }
+
+    if (g_bs.friendlyBufCls) {
+        g_bs.fbbWriteComponentMid = findMethodByDesc(g_bs.friendlyBufCls,
+            "(Lnet/minecraft/network/chat/Component;)Lnet/minecraft/network/FriendlyByteBuf;", false);
+    }
+
+    jclass listCls = env->FindClass("java/util/List");
+    if (listCls) {
+        g_bs.listSizeMid = env->GetMethodID(listCls, "size", "()I");
+        g_bs.listGetMid  = env->GetMethodID(listCls, "get", "(I)Ljava/lang/Object;");
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(listCls);
+    }
+
+    {
+        jclass bbCls = loadOrFind(env, mcLoader, "io.netty.buffer.ByteBuf",
+                                  "Lio/netty/buffer/ByteBuf;");
+        if (bbCls) {
+            g_bs.byteBufGetByteMid = env->GetMethodID(bbCls, "getByte", "(I)B");
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            env->DeleteLocalRef(bbCls);
+        }
+    }
+
+    jclass appCls = loadOrFind(env, mcLoader,
+        "net.minecraft.network.protocol.game.ClientboundAddPlayerPacket",
+        "Lnet/minecraft/network/protocol/game/ClientboundAddPlayerPacket;");
+    if (appCls) {
+        g_bs.addPlayerPacketCls = static_cast<jclass>(env->NewGlobalRef(appCls));
+        g_bs.addPlayerPacketUuidFid = findFieldByDesc(appCls, "Ljava/util/UUID;", false);
+        env->DeleteLocalRef(appCls);
+    }
+
+    jclass cpp = loadOrFind(env, mcLoader,
+        "net.minecraft.network.protocol.game.ClientboundCustomPayloadPacket",
+        "Lnet/minecraft/network/protocol/game/ClientboundCustomPayloadPacket;");
+    if (cpp) {
+        g_bs.customPayloadPacketCls = static_cast<jclass>(env->NewGlobalRef(cpp));
+        env->DeleteLocalRef(cpp);
+    }
+
+    jclass sptCls = loadOrFind(env, mcLoader,
+        "net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket",
+        "Lnet/minecraft/network/protocol/game/ClientboundSetPlayerTeamPacket;");
+    if (sptCls) {
+        g_bs.setPlayerTeamPacketCls = static_cast<jclass>(env->NewGlobalRef(sptCls));
+        g_bs.setPlayerTeamPacketBufCtor = env->GetMethodID(sptCls, "<init>",
+            "(Lnet/minecraft/network/FriendlyByteBuf;)V");
+        g_bs.setPlayerTeamMethodFid  = findFieldByDesc(sptCls, "I", false);
+        g_bs.setPlayerTeamNameFid    = findFieldByDesc(sptCls, "Ljava/lang/String;", false);
+        g_bs.setPlayerTeamPlayersFid = findFieldByDesc(sptCls, "Ljava/util/Collection;", false);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(sptCls);
+    }
+    jclass collCls = env->FindClass("java/util/Collection");
+    if (collCls) {
+        g_bs.collectionContainsMid = env->GetMethodID(collCls, "contains", "(Ljava/lang/Object;)Z");
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(collCls);
+    }
+
+    jclass uuidClsL = env->FindClass("java/util/UUID");
+    if (uuidClsL) {
+        g_bs.uuidGetMsbMid = env->GetMethodID(uuidClsL, "getMostSignificantBits",  "()J");
+        g_bs.uuidGetLsbMid = env->GetMethodID(uuidClsL, "getLeastSignificantBits", "()J");
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(uuidClsL);
+    }
     if (env->ExceptionCheck()) env->ExceptionClear();
+
+    jclass lfp = loadOrFind(env, mcLoader,
+        "net.minecraft.network.protocol.login.ClientboundGameProfilePacket",
+        "Lnet/minecraft/network/protocol/login/ClientboundGameProfilePacket;");
+    if (lfp) {
+        g_bs.loginFinishedPacketCls = static_cast<jclass>(env->NewGlobalRef(lfp));
+
+        g_bs.loginFinishedPacketCtor = findMethodByDesc(lfp,
+            "(Lcom/mojang/authlib/GameProfile;)V", false);
+        env->DeleteLocalRef(lfp);
+    }
+
+    jclass hello = loadOrFind(env, mcLoader,
+        "net.minecraft.network.protocol.login.ServerboundHelloPacket",
+        "Lnet/minecraft/network/protocol/login/ServerboundHelloPacket;");
+    if (hello) {
+        g_bs.helloPacketCls = static_cast<jclass>(env->NewGlobalRef(hello));
+        g_bs.helloPacketNameFid = findFieldByDesc(hello, "Ljava/lang/String;", false);
+        env->DeleteLocalRef(hello);
+    }
+
+    jclass intent = loadOrFind(env, mcLoader,
+        "net.minecraft.network.protocol.handshake.ClientIntentionPacket",
+        "Lnet/minecraft/network/protocol/handshake/ClientIntentionPacket;");
+    if (intent) {
+        g_bs.intentPacketCls = static_cast<jclass>(env->NewGlobalRef(intent));
+        g_bs.intentionPacketIntentFid = findFieldByDesc(intent,
+            "Lnet/minecraft/network/ConnectionProtocol;", false);
+        env->DeleteLocalRef(intent);
+    }
+
+    jclass sReq = loadOrFind(env, mcLoader,
+        "net.minecraft.network.protocol.status.ServerboundStatusRequestPacket",
+        "Lnet/minecraft/network/protocol/status/ServerboundStatusRequestPacket;");
+    if (sReq) { g_bs.statusRequestPacketCls = static_cast<jclass>(env->NewGlobalRef(sReq)); env->DeleteLocalRef(sReq); }
+
+    jclass pReq = loadOrFind(env, mcLoader,
+        "net.minecraft.network.protocol.status.ServerboundPingRequestPacket",
+        "Lnet/minecraft/network/protocol/status/ServerboundPingRequestPacket;");
+    if (pReq) {
+        g_bs.pingRequestPacketCls = static_cast<jclass>(env->NewGlobalRef(pReq));
+        g_bs.pingRequestPacketTimeFid = findFieldByDesc(pReq, "J", false);
+        env->DeleteLocalRef(pReq);
+    }
+
+    jclass pong = loadOrFind(env, mcLoader,
+        "net.minecraft.network.protocol.status.ClientboundPongResponsePacket",
+        "Lnet/minecraft/network/protocol/status/ClientboundPongResponsePacket;");
+    if (pong) {
+        g_bs.pongResponsePacketCls = static_cast<jclass>(env->NewGlobalRef(pong));
+        g_bs.pongResponsePacketCtor = findMethodByDesc(pong, "(J)V", false);
+        env->DeleteLocalRef(pong);
+    }
+
+    jclass sResp = loadOrFind(env, mcLoader,
+        "net.minecraft.network.protocol.status.ClientboundStatusResponsePacket",
+        "Lnet/minecraft/network/protocol/status/ClientboundStatusResponsePacket;");
+    if (sResp) {
+        g_bs.statusResponsePacketCls = static_cast<jclass>(env->NewGlobalRef(sResp));
+
+        g_bs.statusResponsePacketCtor = findMethodByDesc(sResp,
+            "(Lnet/minecraft/network/protocol/status/ServerStatus;)V", false);
+        env->DeleteLocalRef(sResp);
+    }
+    jclass ss = loadOrFind(env, mcLoader,
+        "net.minecraft.network.protocol.status.ServerStatus",
+        "Lnet/minecraft/network/protocol/status/ServerStatus;");
+    if (ss) {
+        g_bs.serverStatusCls = static_cast<jclass>(env->NewGlobalRef(ss));
+
+        env->DeleteLocalRef(ss);
+    }
+
+    jclass pp = loadOrFind(env, mcLoader,
+        "net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket",
+        "Lnet/minecraft/network/protocol/game/ClientboundPlayerPositionPacket;");
+    if (pp) {
+        g_bs.playerPositionPacketCls = static_cast<jclass>(env->NewGlobalRef(pp));
+        g_bs.playerPositionPacketCtor = findMethodByDesc(pp,
+            "(DDDFFLjava/util/Set;I)V", false);
+        env->DeleteLocalRef(pp);
+    }
+
+    jclass setC = env->FindClass("java/util/Set");
+    if (setC) {
+        g_bs.setCls = static_cast<jclass>(env->NewGlobalRef(setC));
+        g_bs.setOfMid = env->GetStaticMethodID(setC, "of", "()Ljava/util/Set;");
+        env->DeleteLocalRef(setC);
+    }
+
+    jclass kap = loadOrFind(env, mcLoader,
+        "net.minecraft.network.protocol.game.ClientboundKeepAlivePacket",
+        "Lnet/minecraft/network/protocol/game/ClientboundKeepAlivePacket;");
+    if (kap) {
+        g_bs.keepAlivePacketCls = static_cast<jclass>(env->NewGlobalRef(kap));
+        g_bs.keepAlivePacketCtor = findMethodByDesc(kap, "(J)V", false);
+        env->DeleteLocalRef(kap);
+    }
+
+    jclass cbp = loadOrFind(env, mcLoader,
+        "net.minecraft.network.protocol.game.ClientboundBundlePacket",
+        "Lnet/minecraft/network/protocol/game/ClientboundBundlePacket;");
+    if (cbp) {
+        g_bs.bundlePacketCls = static_cast<jclass>(env->NewGlobalRef(cbp));
+        jclass bp = loadOrFind(env, mcLoader,
+            "net.minecraft.network.protocol.BundlePacket",
+            "Lnet/minecraft/network/protocol/BundlePacket;");
+        if (bp) {
+            g_bs.bundleSubPacketsMid = findMethodByDesc(bp, "()Ljava/lang/Iterable;", false);
+            env->DeleteLocalRef(bp);
+        }
+        env->DeleteLocalRef(cbp);
+    } else {
+        LogTo("BServer: ClientboundBundlePacket not found — bundles won't be expanded");
+    }
+    jclass iterableCls = env->FindClass("java/lang/Iterable");
+    if (iterableCls) {
+        g_bs.iterableIteratorMid = env->GetMethodID(iterableCls, "iterator", "()Ljava/util/Iterator;");
+        env->DeleteLocalRef(iterableCls);
+    }
+    jclass iteratorCls = env->FindClass("java/util/Iterator");
+    if (iteratorCls) {
+        g_bs.iteratorHasNextMid = env->GetMethodID(iteratorCls, "hasNext", "()Z");
+        g_bs.iteratorNextMid    = env->GetMethodID(iteratorCls, "next", "()Ljava/lang/Object;");
+        env->DeleteLocalRef(iteratorCls);
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
+
+    jclass uuidCls = env->FindClass("java/util/UUID");
+    if (uuidCls) {
+        g_bs.uuidCls = static_cast<jclass>(env->NewGlobalRef(uuidCls));
+        g_bs.uuidNameUuidFromBytesMid = env->GetStaticMethodID(uuidCls,
+            "nameUUIDFromBytes", "([B)Ljava/util/UUID;");
+        env->DeleteLocalRef(uuidCls);
+    }
+
+    LogTo("cacheJavaRefs: configureSer=%p send=%p attrProtoFid=%p bundlerFid=%p "
+          "protoHS=%p protoLOGIN=%p protoPLAY=%p flowSB=%p pipMid=%p addLast=%p "
+          "attrSet=%p gpCtor=%p lfpCtor=%p helloName=%p uuidFromBytes=%p",
+          (void*)g_bs.connectionConfigureSerMid, (void*)g_bs.connectionSendMid,
+          (void*)g_bs.connectionAttrProtocolFid, (void*)g_bs.bundlerProviderFid,
+          (void*)g_bs.protoHandshaking, (void*)g_bs.protoLogin, (void*)g_bs.protoPlay,
+          (void*)g_bs.flowServerbound, (void*)g_bs.channelPipelineMid,
+          (void*)g_bs.pipelineAddLastMid, (void*)g_bs.attributeSetMid,
+          (void*)g_bs.gameProfileCtor, (void*)g_bs.loginFinishedPacketCtor,
+          (void*)g_bs.helloPacketNameFid, (void*)g_bs.uuidNameUuidFromBytesMid);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+
+    if (g_bs.minecraftCls) {
+        g_bs.mcGetConnectionMid = findMethodByDesc(g_bs.minecraftCls,
+            "()Lnet/minecraft/client/multiplayer/ClientPacketListener;", false);
+        g_bs.mcPlayerFid   = findFieldByDesc(g_bs.minecraftCls,
+            "Lnet/minecraft/client/player/LocalPlayer;", false);
+        g_bs.mcGameModeFid = findFieldByDesc(g_bs.minecraftCls,
+            "Lnet/minecraft/client/multiplayer/MultiPlayerGameMode;", false);
+        g_bs.mcLevelFid    = findFieldByDesc(g_bs.minecraftCls,
+            "Lnet/minecraft/client/multiplayer/ClientLevel;", false);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    }
+    jclass cplCls = loadOrFind(env, mcLoader,
+        "net.minecraft.client.multiplayer.ClientPacketListener",
+        "Lnet/minecraft/client/multiplayer/ClientPacketListener;");
+    if (cplCls) {
+        g_bs.clientPacketListenerCls = static_cast<jclass>(env->NewGlobalRef(cplCls));
+        g_bs.cplGetConnectionMid  = findMethodByDesc(cplCls, "()Lnet/minecraft/network/Connection;", false);
+        g_bs.cplLevelsMid         = findMethodByDesc(cplCls, "()Ljava/util/Set;", false);
+        g_bs.cplRegistryAccessMid = findMethodByDesc(cplCls, "()Lnet/minecraft/core/RegistryAccess;", false);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(cplCls);
+    }
+    jclass raCls = loadOrFind(env, mcLoader, "net.minecraft.core.RegistryAccess",
+                              "Lnet/minecraft/core/RegistryAccess;");
+    if (raCls) {
+        g_bs.registryAccessFreezeMid = findMethodByDesc(raCls,
+            "()Lnet/minecraft/core/RegistryAccess$Frozen;", false);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(raCls);
+    }
+    jclass mpgmCls = loadOrFind(env, mcLoader,
+        "net.minecraft.client.multiplayer.MultiPlayerGameMode",
+        "Lnet/minecraft/client/multiplayer/MultiPlayerGameMode;");
+    if (mpgmCls) {
+
+        g_bs.gameModeGetTypeMid = findMethodByDesc(mpgmCls,
+            "()Lnet/minecraft/world/level/GameType;", false);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(mpgmCls);
+    }
+    jclass lvlCls = loadOrFind(env, mcLoader, "net.minecraft.world.level.Level",
+                               "Lnet/minecraft/world/level/Level;");
+    if (lvlCls) {
+        g_bs.levelCls = static_cast<jclass>(env->NewGlobalRef(lvlCls));
+
+        jmethodID dimMids[2] = {nullptr, nullptr};
+        int nDim = findMethodsByDesc(lvlCls, "()Lnet/minecraft/resources/ResourceKey;", false, dimMids, 2);
+        g_bs.levelDimMidA = dimMids[0];
+        g_bs.levelDimMidB = dimMids[1];
+        LogTo("  level: %d ()ResourceKey method(s)", nDim);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(lvlCls);
+    }
+    jclass objCls = env->FindClass("java/lang/Object");
+    if (objCls) {
+        g_bs.objToStringMid = env->GetMethodID(objCls, "toString", "()Ljava/lang/String;");
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(objCls);
+    }
+    jclass optionalClsL = env->FindClass("java/util/Optional");
+    if (optionalClsL) {
+        g_bs.optionalCls = static_cast<jclass>(env->NewGlobalRef(optionalClsL));
+        g_bs.optionalEmptyMid = env->GetStaticMethodID(optionalClsL, "empty", "()Ljava/util/Optional;");
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(optionalClsL);
+    }
+    jclass loginCls = loadOrFind(env, mcLoader,
+        "net.minecraft.network.protocol.game.ClientboundLoginPacket",
+        "Lnet/minecraft/network/protocol/game/ClientboundLoginPacket;");
+    if (loginCls) {
+        g_bs.loginPacketCls = static_cast<jclass>(env->NewGlobalRef(loginCls));
+
+        g_bs.loginPacketCtor = env->GetMethodID(loginCls, "<init>",
+            "(IZLnet/minecraft/world/level/GameType;Lnet/minecraft/world/level/GameType;"
+            "Ljava/util/Set;Lnet/minecraft/core/RegistryAccess$Frozen;"
+            "Lnet/minecraft/resources/ResourceKey;Lnet/minecraft/resources/ResourceKey;"
+            "JIIIZZZZLjava/util/Optional;I)V");
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        LogTo("  login ctor %s", g_bs.loginPacketCtor ? "resolved" : "MISSING");
+        env->DeleteLocalRef(loginCls);
+    }
+
     return g_bs.connectionConfigureSerMid && g_bs.connectionSendMid &&
            g_bs.flowServerbound && g_bs.channelPipelineMid && g_bs.pipelineAddLastMid &&
            g_bs.channelWriteAndFlushMid && g_bs.channelAttrMid && g_bs.attributeSetMid;
@@ -1210,12 +1508,6 @@ bool reconstructAndSendLoginToB(JNIEnv* env, jobject ch) {
         LogTo("mid-login: refs missing, cannot rebuild login");
         return false;
     }
-
-    if (g_bs.runtime == MinecraftRuntime::Modern_1_21_8) {
-        LogTo("mid-login: modern runtime=%s detected; legacy fallback path only for now", MinecraftRuntimeName(g_bs.runtime));
-        return false;
-    }
-
     jobject mc = env->CallStaticObjectMethod(g_bs.minecraftCls, g_bs.mcGetInstanceMid);
     if (!mc || env->ExceptionCheck()) { env->ExceptionClear(); return false; }
     jobject cpl = env->CallObjectMethod(mc, g_bs.mcGetConnectionMid);
@@ -1739,6 +2031,134 @@ void BServer_ForwardToB(JNIEnv* env, jobject packet) {
     env->DeleteLocalRef(ch);
 }
 
+jobject MakeGhostServerStatus(JNIEnv* env, jobject component, jobject versionObj) {
+    if (!g_bs.serverStatusCls) return nullptr;
+
+    jmethodID ctor = FindConstructorByDescriptor(
+        env, g_bs.serverStatusCls,
+        "(Lnet/minecraft/network/chat/Component;Lnet/minecraft/network/protocol/status/ServerStatus$Version;IIZZ)V");
+    if (ctor) {
+        return env->NewObject(g_bs.serverStatusCls, ctor,
+                              component, versionObj,
+                              (jint)1, (jint)1,
+                              (jboolean)JNI_FALSE, (jboolean)JNI_FALSE);
+    }
+
+    ctor = FindConstructorByDescriptor(
+        env, g_bs.serverStatusCls,
+        "(Lnet/minecraft/network/chat/Component;Lnet/minecraft/network/protocol/status/ServerStatus$Version;IIZZZ)V");
+    if (ctor) {
+        return env->NewObject(g_bs.serverStatusCls, ctor,
+                              component, versionObj,
+                              (jint)1, (jint)1,
+                              (jboolean)JNI_FALSE, (jboolean)JNI_FALSE, (jboolean)JNI_FALSE);
+    }
+
+    ctor = FindConstructorByDescriptor(
+        env, g_bs.serverStatusCls,
+        "(Lnet/minecraft/network/chat/Component;Lnet/minecraft/network/protocol/status/ServerStatus$Version;IIZ)V");
+    if (ctor) {
+        return env->NewObject(g_bs.serverStatusCls, ctor,
+                              component, versionObj,
+                              (jint)1, (jint)1,
+                              (jboolean)JNI_FALSE);
+    }
+
+    ctor = FindConstructorByDescriptor(
+        env, g_bs.serverStatusCls,
+        "(Lnet/minecraft/network/chat/Component;Lnet/minecraft/network/protocol/status/ServerStatus$Version;II)V");
+    if (ctor) {
+        return env->NewObject(g_bs.serverStatusCls, ctor,
+                              component, versionObj,
+                              (jint)1, (jint)1);
+    }
+
+    ctor = FindConstructorByDescriptor(
+        env, g_bs.serverStatusCls,
+        "(Lnet/minecraft/network/chat/Component;IIZZ)V");
+    if (ctor) {
+        return env->NewObject(g_bs.serverStatusCls, ctor,
+                              component,
+                              (jint)1, (jint)1,
+                              (jboolean)JNI_FALSE, (jboolean)JNI_FALSE);
+    }
+
+    ctor = FindConstructorByDescriptor(
+        env, g_bs.serverStatusCls,
+        "(Lnet/minecraft/network/chat/Component;IIZ)V");
+    if (ctor) {
+        return env->NewObject(g_bs.serverStatusCls, ctor,
+                              component,
+                              (jint)1, (jint)1,
+                              (jboolean)JNI_FALSE);
+    }
+
+    return nullptr;
+}
+
+bool TrySendGhostStatusResponse(JNIEnv* env) {
+    if (!g_bs.statusResponsePacketCls || !g_bs.statusResponsePacketCtor || !g_bs.serverStatusCls) {
+        LogTo("BServer: status spoof disabled (missing packet/status refs)");
+        return false;
+    }
+
+    jclass componentCls = env->FindClass("net/minecraft/network/chat/Component");
+    if (!componentCls) return false;
+    jmethodID literalMid = env->GetStaticMethodID(
+        componentCls, "literal", "(Ljava/lang/String;)Lnet/minecraft/network/chat/Component;");
+    if (!literalMid) {
+        env->DeleteLocalRef(componentCls);
+        return false;
+    }
+
+    jstring motd = env->NewStringUTF("Ghostnel");
+    jobject component = env->CallStaticObjectMethod(componentCls, literalMid, motd);
+    env->DeleteLocalRef(motd);
+    env->DeleteLocalRef(componentCls);
+    if (!component || env->ExceptionCheck()) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return false;
+    }
+
+    jobject versionObj = nullptr;
+    jclass versionCls = env->FindClass("net/minecraft/network/protocol/status/ServerStatus$Version");
+    if (versionCls) {
+        jmethodID versionCtor = env->GetMethodID(versionCls, "<init>", "(Ljava/lang/String;I)V");
+        if (versionCtor) {
+            jstring versionName = env->NewStringUTF("Ghostnel");
+            versionObj = env->NewObject(versionCls, versionCtor, versionName, (jint)1);
+            env->DeleteLocalRef(versionName);
+            if (env->ExceptionCheck()) {
+                env->ExceptionClear();
+                env->DeleteLocalRef(versionObj);
+                versionObj = nullptr;
+            }
+        }
+        env->DeleteLocalRef(versionCls);
+    }
+
+    jobject status = MakeGhostServerStatus(env, component, versionObj);
+    if (versionObj) env->DeleteLocalRef(versionObj);
+    env->DeleteLocalRef(component);
+    if (!status || env->ExceptionCheck()) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return false;
+    }
+
+    jobject resp = env->NewObject(g_bs.statusResponsePacketCls,
+                                  g_bs.statusResponsePacketCtor, status);
+    env->DeleteLocalRef(status);
+    if (!resp || env->ExceptionCheck()) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return false;
+    }
+
+    writeToB(env, resp);
+    env->DeleteLocalRef(resp);
+    LogTo("BServer: spoofed status response MOTD=Ghostnel");
+    return true;
+}
+
 void BSide_OnPacket(JNIEnv* env, jobject , jobject msg) {
     std::string cls = classNameForB(env, msg);
     BState state = g_bs.bState.load(std::memory_order_acquire);
@@ -1769,6 +2189,11 @@ void BSide_OnPacket(JNIEnv* env, jobject , jobject msg) {
         return;
     }
 
+    if (g_bs.statusRequestPacketCls && env->IsInstanceOf(msg, g_bs.statusRequestPacketCls)) {
+        TrySendGhostStatusResponse(env);
+        return;
+    }
+
     if (g_bs.pingRequestPacketCls && env->IsInstanceOf(msg, g_bs.pingRequestPacketCls)) {
         jlong t = 0;
         if (g_bs.pingRequestPacketTimeFid)
@@ -1792,6 +2217,4 @@ void BSide_OnPacket(JNIEnv* env, jobject , jobject msg) {
             routeToA(env, msg);
         }
     }
-}
-
 }
