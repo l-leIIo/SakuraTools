@@ -14,6 +14,7 @@ add_library(MinecraftProxy_msvc SHARED
     native/random_name.cpp
     native/classfile.cpp
     native/class_edit.cpp
+    native/mc_compat.cpp
     native/trampolines.cpp
     native/relay_handler.cpp
     native/connection_hook.cpp
